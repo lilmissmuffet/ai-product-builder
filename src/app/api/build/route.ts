@@ -1,0 +1,4 @@
+import { NextResponse } from "next/server";
+import { askAI } from "../../../../lib/ai";
+import { requireApiUser } from "../../../../lib/auth";
+export async function POST(request: Request) { try {await requireApiUser(request);const body=await request.json();if(!body.analysis)throw new Error("An analysis is required before creating a concept.");const concept=await askAI(`You are a senior product designer. Create a cohesive product concept from this context. Return ONLY valid JSON with exactly productName, productDescription, features (string array), navigation (string array), pages (array of {name,purpose,sections:string array}), designDirection. It must be practical, internally consistent, and reflect the analysis. ${JSON.stringify(body)}`);return NextResponse.json({concept});}catch(error){const message=error instanceof Error?error.message:"Unable to create product concept.";return NextResponse.json({error:message},{status:message==="Unauthorized"?401:400});}}

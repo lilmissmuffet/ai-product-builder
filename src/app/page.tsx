@@ -1,69 +1,43 @@
-import Image from "next/image";
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "../../lib/supabase";
+
+type Analysis = { purpose:string; targetUsers:string; coreProblem:string; positioning:string; keyFeatures:string[]; businessModel:string; improvements:string[]; mvpFeatures:string[]; summary:string };
+type Concept = { productName:string; productDescription:string; features:string[]; navigation:string[]; pages:{name:string;purpose:string;sections:string[]}[]; designDirection:string };
+type Project = { id:string; name:string; website_url:string; product_description:string; target_customer:string; analysis:Analysis|null; concept:Concept|null; conversation:{role:"user"|"assistant";content:string}[]; updated_at:string };
+const empty = { name:"", website_url:"", product_description:"", target_customer:"" };
 
 export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+  const [session, setSession] = useState<Session|null>(null), [mode, setMode] = useState<"login"|"signup">("signup");
+  const [projects, setProjects] = useState<Project[]>([]), [project, setProject] = useState<Project|null>(null), [form, setForm] = useState(empty);
+  const [busy, setBusy] = useState(""), [error, setError] = useState(""), [instruction, setInstruction] = useState("");
+  useEffect(() => { supabase.auth.getSession().then(({data}) => setSession(data.session)); const {data:l}=supabase.auth.onAuthStateChange((_,s)=>setSession(s)); return()=>l.subscription.unsubscribe(); },[]);
+  useEffect(() => { if(session) { void supabase.from("projects").select("*").order("updated_at",{ascending:false}).then(({data,error}) => { if(error) setError("Could not load projects. Apply the Supabase migration first."); else { const loaded=data as Project[]||[];setProjects(loaded);if(loaded[0])open(loaded[0]); } }); } },[session]);
+  function open(p:Project) {setProject(p);setForm({name:p.name,website_url:p.website_url,product_description:p.product_description,target_customer:p.target_customer});setError("")}
+  function reset() {setProject(null);setForm(empty);setError("")}
+  async function save() {
+    if(!form.name||!form.product_description||!form.target_customer) return setError("Project name, product description, and target customer are required.");
+    if(!session) return setError("Your session expired. Please sign in again.");
+    setBusy("save");setError(""); const record={...form,user_id:session.user.id,analysis:project?.analysis||null,concept:project?.concept||null,conversation:project?.conversation||[]};
+    const result=project?await supabase.from("projects").update(record).eq("id",project.id).select().single():await supabase.from("projects").insert(record).select().single(); setBusy("");
+    if(result.error)return setError("Could not save. Apply the Supabase migration first."); const p=result.data as Project;setProject(p);setProjects(x=>[p,...x.filter(y=>y.id!==p.id)]);
+  }
+  async function api(path:string,body:object) {const {data:{session:activeSession}}=await supabase.auth.getSession();if(!activeSession)throw new Error("Your session expired. Please sign in again.");const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${activeSession.access_token}`},body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw new Error(d.error||"Request failed.");return d}
+  async function persist(p:Project) {const {data,error}=await supabase.from("projects").update({...form,analysis:p.analysis,concept:p.concept,conversation:p.conversation}).eq("id",p.id).select().single();if(error)throw new Error("Result created but could not be saved.");const saved=data as Project;setProjects(x=>[saved,...x.filter(y=>y.id!==saved.id)])}
+  async function analyze() {if(!project){await save();return}setBusy("analyze");setError("");try{const {analysis}=await api("/api/analyze",form);const p={...project,analysis};await persist(p);setProject(p)}catch(e){setError(e instanceof Error?e.message:"Analysis failed.")}finally{setBusy("")}}
+  async function build() {if(!project?.analysis)return setError("Run an analysis before building.");setBusy("build");try{const {concept}=await api("/api/build",{...form,analysis:project.analysis});const p={...project,concept,conversation:[{role:"assistant" as const,content:"Your initial concept is ready. Tell me what you would like to change."}]};await persist(p);setProject(p)}catch(e){setError(e instanceof Error?e.message:"Build failed.")}finally{setBusy("")}}
+  async function refine(e:FormEvent) {e.preventDefault();if(!project?.concept||!instruction.trim())return;const message=instruction.trim();setInstruction("");setBusy("refine");try{const {concept,reply}=await api("/api/refine",{concept:project.concept,instruction:message,context:form});const p={...project,concept,conversation:[...project.conversation,{role:"user" as const,content:message},{role:"assistant" as const,content:reply}]};await persist(p);setProject(p)}catch(e){setError(e instanceof Error?e.message:"Update failed.")}finally{setBusy("")}}
+  async function authenticate(e:FormEvent<HTMLFormElement>) {e.preventDefault();setBusy("auth");setError("");const d=new FormData(e.currentTarget),email=String(d.get("email")),password=String(d.get("password"));const r=mode==="signup"?await supabase.auth.signUp({email,password}):await supabase.auth.signInWithPassword({email,password});setBusy("");if(r.error)setError(r.error.message);else if(mode==="signup"&&!r.data.session)setError("Check your inbox to confirm your account, then sign in.")}
+  if(!session)return <><Landing start={()=>document.getElementById("auth")?.scrollIntoView({behavior:"smooth"})}/><section className="auth-section" id="auth"><form className="auth-card" onSubmit={authenticate}><p className="eyebrow">Get started</p><h2>{mode==="signup"?"Build your next product":"Welcome back"}</h2><label>Email<input name="email" type="email" required placeholder="you@company.com"/></label><label>Password<input name="password" type="password" minLength={6} required placeholder="At least 6 characters"/></label>{error&&<p className="notice">{error}</p>}<button disabled={!!busy}>{busy?"Working...":mode==="signup"?"Create account":"Sign in"}</button><button type="button" className="text-button" onClick={()=>setMode(mode==="signup"?"login":"signup")}>{mode==="signup"?"Already have an account? Sign in":"Need an account? Create one"}</button></form></section></>;
+  return <main className="workspace"><aside><Link className="brand" href="/">forge<span>AI</span></Link><button className="new-project" onClick={reset}>+ New project</button><p className="side-label">Your projects</p><nav>{projects.map(p=><button key={p.id} className={p.id===project?.id?"project active":"project"} onClick={()=>open(p)}><strong>{p.name}</strong><small>{new Date(p.updated_at).toLocaleDateString()}</small></button>)}</nav><button className="logout" onClick={()=>supabase.auth.signOut()}>Sign out</button></aside><section className="work-area"><header><div><p className="eyebrow">Product workspace</p><h1>{project?.name||"New product"}</h1></div><button onClick={save} disabled={!!busy}>{busy==="save"?"Saving...":"Save project"}</button></header>{error&&<p className="error">{error}</p>}<div className="workspace-grid"><section className="intake panel"><h2>Product brief</h2><p>Give Forge enough context to make an informed recommendation.</p><Field label="Project name"><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Compass CRM"/></Field><Field label="Website URL (optional)"><input type="url" value={form.website_url} onChange={e=>setForm({...form,website_url:e.target.value})} placeholder="https://example.com"/></Field><Field label="What are you building?"><textarea value={form.product_description} onChange={e=>setForm({...form,product_description:e.target.value})} placeholder="Describe the product and customer need."/></Field><Field label="Target customer"><textarea value={form.target_customer} onChange={e=>setForm({...form,target_customer:e.target.value})} placeholder="Who needs it, and in what context?"/></Field><div className="actions"><button className="secondary" onClick={save} disabled={!!busy}>Save</button><button onClick={analyze} disabled={!!busy}>{busy==="analyze"?"Analyzing...":"Analyze product"}</button></div></section><section className="results">{project?.analysis?<AnalysisView analysis={project.analysis} build={build} busy={busy==="build"}/>:<Empty title="Your analysis will appear here" text="Save this project and run an analysis to get a clear product strategy."/>}{project?.concept&&<ConceptView concept={project.concept} conversation={project.conversation} instruction={instruction} setInstruction={setInstruction} submit={refine} busy={busy==="refine"}/>}</section></div></section></main>
 }
+function Field({label,children}:{label:string;children:React.ReactNode}) {return <label>{label}{children}</label>}
+function AnalysisView({analysis,build,busy}:{analysis:Analysis;build:()=>void;busy:boolean}) {return <section className="panel analysis"><div className="panel-top"><div><p className="eyebrow">AI analysis</p><h2>Product opportunity</h2></div><button onClick={build} disabled={busy}>{busy?"Building...":"Build my product"}</button></div><p className="summary">{analysis.summary}</p><div className="analysis-grid"><Fact l="Purpose" v={analysis.purpose}/><Fact l="Target users" v={analysis.targetUsers}/><Fact l="Core problem" v={analysis.coreProblem}/><Fact l="Positioning" v={analysis.positioning}/><Fact l="Business model" v={analysis.businessModel}/></div><List label="Key features" items={analysis.keyFeatures}/><List label="Suggested improvements" items={analysis.improvements}/><List label="Proposed MVP" items={analysis.mvpFeatures}/></section>}
+function ConceptView({concept,conversation,instruction,setInstruction,submit,busy}:{concept:Concept;conversation:{role:string;content:string}[];instruction:string;setInstruction:(v:string)=>void;submit:(e:FormEvent)=>void;busy:boolean}) {return <section className="panel concept"><p className="eyebrow">Product concept</p><h2>{concept.productName}</h2><p className="summary">{concept.productDescription}</p><p className="direction"><b>Design direction:</b> {concept.designDirection}</p><div className="concept-columns"><List label="Core features" items={concept.features}/><List label="Navigation" items={concept.navigation}/></div><div className="page-map"><h3>Page structure</h3>{concept.pages.map(p=><article key={p.name}><strong>{p.name}</strong><span>{p.purpose}</span><small>{p.sections.join(" · ")}</small></article>)}</div><div className="conversation">{conversation.map((m,i)=><p className={m.role} key={i}>{m.content}</p>)}</div><form className="refine" onSubmit={submit}><input value={instruction} onChange={e=>setInstruction(e.target.value)} disabled={busy} placeholder="Make the design more premium..."/><button disabled={busy||!instruction.trim()}>{busy?"Updating...":"Update"}</button></form></section>}
+function Fact({l,v}:{l:string;v:string}) {return <div className="fact"><b>{l}</b><p>{v}</p></div>}
+function List({label,items}:{label:string;items:string[]}) {return <div className="list"><h3>{label}</h3><ul>{items.map((v,i)=><li key={i}>{v}</li>)}</ul></div>}
+function Empty({title,text}:{title:string;text:string}) {return <section className="empty"><div>✦</div><h2>{title}</h2><p>{text}</p></section>}
+function Landing({start}:{start:()=>void}) {return <main className="landing"><nav className="landing-nav"><Link className="brand" href="/">forge<span>AI</span></Link><button className="link-button" onClick={start}>Sign in</button><button onClick={start}>Start building</button></nav><section className="hero"><p className="eyebrow">Product thinking, amplified</p><h1>Turn a rough idea into a product people want.</h1><p>Forge analyzes your market context, frames the opportunity, and gives you an editable product blueprint in minutes.</p><button onClick={start}>Build with Forge <span>→</span></button><div className="hero-demo"><div>Product opportunity <i></i><i></i><i></i></div><section><article><small>POSITIONING</small><strong>The focused operating system for independent studios.</strong><p>Connect project decisions to the work that happens next.</p></article><ul><li>01 Client workspace</li><li>02 Project command center</li><li>03 Decision history</li></ul></section></div></section><section className="trust"><span>Built for clear thinkers at</span><b>STARTUPS</b><b>STUDIOS</b><b>VENTURES</b><b>PRODUCT TEAMS</b></section><section className="features"><div><p className="eyebrow">A faster first draft</p><h2>Everything you need to shape the work before you build it.</h2></div><div className="feature-grid"><article><b>01</b><h3>Read the landscape</h3><p>Bring your existing site and idea together in one grounded analysis.</p></article><article><b>02</b><h3>Find the sharp edge</h3><p>Clarify customers, positioning, MVP scope, and overlooked opportunities.</p></article><article><b>03</b><h3>Keep iterating</h3><p>Direct the concept in plain language as your point of view evolves.</p></article></div></section><section className="how"><p className="eyebrow">How it works</p><div><h2>From context to a confident starting point.</h2><ol><li><span>1</span>Add your product context</li><li><span>2</span>Review a strategic analysis</li><li><span>3</span>Refine a build-ready concept</li></ol></div></section><section className="pricing"><p className="eyebrow">Simple pricing</p><h2>Start with your next idea.</h2><article><span>Explorer</span><strong>$19 <small>/ month</small></strong><p>For individuals shaping products with intention.</p><button onClick={start}>Start building</button></article></section><footer><Link className="brand" href="/">forge<span>AI</span></Link><span>Product clarity for the curious.</span><span>© 2026 Forge AI</span></footer></main>}
