@@ -4,10 +4,9 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
+import PrototypePreview, { Concept } from "./components/PrototypePreview";
 
 type Analysis = { purpose:string; targetUsers:string; coreProblem:string; positioning:string; keyFeatures:string[]; businessModel:string; improvements:string[]; mvpFeatures:string[]; summary:string };
-type DesignDirection = { palette:string; typography:string; layoutStyle:string; visualTone:string };
-type Concept = { productName:string; productDescription:string; features:string[]; navigation:string[]; pages:{name:string;purpose:string;sections:string[]}[]; designDirection:DesignDirection };
 type Project = { id:string; name:string; website_url:string; product_description:string; target_customer:string; analysis:Analysis|null; concept:Concept|null; conversation:{role:"user"|"assistant";content:string}[]; updated_at:string };
 const empty = { name:"", website_url:"", product_description:"", target_customer:"" };
 
@@ -16,6 +15,7 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]), [project, setProject] = useState<Project|null>(null), [form, setForm] = useState(empty);
   const selectedProjectRef = useRef<Project|null>(null);
   const [busy, setBusy] = useState(""), [error, setError] = useState(""), [instruction, setInstruction] = useState(""), [buildDiagnostics, setBuildDiagnostics] = useState<string[]>([]);
+  const [viewTab, setViewTab] = useState<"spec" | "prototype">("spec");
   function traceBuild(message:string) { console.info(`[Build My Product] ${message}`); setBuildDiagnostics((current) => [...current, message]); }
   useEffect(() => { supabase.auth.getSession().then(({data}) => setSession(data.session)); const {data:l}=supabase.auth.onAuthStateChange((_,s)=>setSession(s)); return()=>l.subscription.unsubscribe(); },[]);
   useEffect(() => { if(session) { void supabase.from("projects").select("*").order("updated_at",{ascending:false}).then(({data,error}) => { if(error) { console.error("Supabase project load failed:", error); setError(error.message); } else { const loaded=data as Project[]||[];setProjects(loaded);const firstProject=loaded[0];if(!selectedProjectRef.current&&firstProject) {selectedProjectRef.current=firstProject;setProject(firstProject);setForm({name:firstProject.name,website_url:firstProject.website_url,product_description:firstProject.product_description,target_customer:firstProject.target_customer});setError("");} } }); } },[session]);
@@ -36,7 +36,70 @@ export default function Home() {
   async function refine(e:FormEvent) {e.preventDefault();if(!project?.concept||!instruction.trim())return;const message=instruction.trim();setInstruction("");setBusy("refine");try{const {concept,reply}=await api("/api/refine",{concept:project.concept,instruction:message,context:form});const p={...project,concept,conversation:[...project.conversation,{role:"user" as const,content:message},{role:"assistant" as const,content:reply}]};const saved=await persist(p);selectProject(saved)}catch(e){setError(e instanceof Error?e.message:"Update failed.")}finally{setBusy("")}}
   async function authenticate(e:FormEvent<HTMLFormElement>) {e.preventDefault();setBusy("auth");setError("");const d=new FormData(e.currentTarget),email=String(d.get("email")),password=String(d.get("password"));const r=mode==="signup"?await supabase.auth.signUp({email,password}):await supabase.auth.signInWithPassword({email,password});setBusy("");if(r.error)setError(r.error.message);else if(mode==="signup"&&!r.data.session)setError("Check your inbox to confirm your account, then sign in.")}
   if(!session)return <><Landing start={()=>document.getElementById("auth")?.scrollIntoView({behavior:"smooth"})}/><section className="auth-section" id="auth"><form className="auth-card" onSubmit={authenticate}><p className="eyebrow">Get started</p><h2>{mode==="signup"?"Build your next product":"Welcome back"}</h2><label>Email<input name="email" type="email" required placeholder="you@company.com"/></label><label>Password<input name="password" type="password" minLength={6} required placeholder="At least 6 characters"/></label>{error&&<p className="notice">{error}</p>}<button disabled={!!busy}>{busy?"Working...":mode==="signup"?"Create account":"Sign in"}</button><button type="button" className="text-button" onClick={()=>setMode(mode==="signup"?"login":"signup")}>{mode==="signup"?"Already have an account? Sign in":"Need an account? Create one"}</button></form></section></>;
-  return <main className="workspace"><aside><Link className="brand" href="/">forge<span>AI</span></Link><button className="new-project" onClick={reset}>+ New project</button><p className="side-label">Your projects</p><nav>{projects.map(p=><button key={p.id} className={p.id===project?.id?"project active":"project"} onClick={()=>open(p)}><strong>{p.name}</strong><small>{new Date(p.updated_at).toLocaleDateString()}</small></button>)}</nav><button className="logout" onClick={()=>supabase.auth.signOut()}>Sign out</button></aside><section className="work-area"><header><div><p className="eyebrow">Product workspace</p><h1>{project?.name||"New product"}</h1></div><button onClick={save} disabled={!!busy}>{busy==="save"?"Saving...":"Save project"}</button></header>{error&&<p className="error">{error}</p>}{buildDiagnostics.length>0&&<pre className="error">{buildDiagnostics.join("\n")}</pre>}<div className="workspace-grid"><section className="intake panel"><h2>Product brief</h2><p>Give Forge enough context to make an informed recommendation.</p><Field label="Project name"><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Compass CRM"/></Field><Field label="Website URL (optional)"><input type="url" value={form.website_url} onChange={e=>setForm({...form,website_url:e.target.value})} placeholder="https://example.com"/></Field><Field label="What are you building?"><textarea value={form.product_description} onChange={e=>setForm({...form,product_description:e.target.value})} placeholder="Describe the product and customer need."/></Field><Field label="Target customer"><textarea value={form.target_customer} onChange={e=>setForm({...form,target_customer:e.target.value})} placeholder="Who needs it, and in what context?"/></Field><div className="actions"><button className="secondary" onClick={save} disabled={!!busy}>Save</button><button onClick={analyze} disabled={!!busy}>{busy==="analyze"?"Analyzing...":"Analyze product"}</button></div></section><section className="results">{project?.analysis?<AnalysisView analysis={project.analysis} build={build} busy={busy==="build"}/>:<Empty title="Your analysis will appear here" text="Save this project and run an analysis to get a clear product strategy."/>}{project?.concept&&<ConceptView concept={project.concept} conversation={project.conversation} instruction={instruction} setInstruction={setInstruction} submit={refine} busy={busy==="refine"}/>}</section></div></section></main>
+  return <main className="workspace"><aside><Link className="brand" href="/">forge<span>AI</span></Link><button className="new-project" onClick={reset}>+ New project</button><p className="side-label">Your projects</p><nav>{projects.map(p=><button key={p.id} className={p.id===project?.id?"project active":"project"} onClick={()=>open(p)}><strong>{p.name}</strong><small>{new Date(p.updated_at).toLocaleDateString()}</small></button>)}</nav><button className="logout" onClick={()=>supabase.auth.signOut()}>Sign out</button></aside><section className="work-area"><header><div><p className="eyebrow">Product workspace</p><h1>{project?.name||"New product"}</h1></div><button onClick={save} disabled={!!busy}>{busy==="save"?"Saving...":"Save project"}</button></header>{error&&<p className="error">{error}</p>}{buildDiagnostics.length>0&&<pre className="error">{buildDiagnostics.join("\n")}</pre>}<div className="workspace-grid"><section className="intake panel"><h2>Product brief</h2><p>Give Forge enough context to make an informed recommendation.</p><Field label="Project name"><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Compass CRM"/></Field><Field label="Website URL (optional)"><input type="url" value={form.website_url} onChange={e=>setForm({...form,website_url:e.target.value})} placeholder="https://example.com"/></Field><Field label="What are you building?"><textarea value={form.product_description} onChange={e=>setForm({...form,product_description:e.target.value})} placeholder="Describe the product and customer need."/></Field><Field label="Target customer"><textarea value={form.target_customer} onChange={e=>setForm({...form,target_customer:e.target.value})} placeholder="Who needs it, and in what context?"/></Field><div className="actions"><button className="secondary" onClick={save} disabled={!!busy}>Save</button><button onClick={analyze} disabled={!!busy}>{busy==="analyze"?"Analyzing...":"Analyze product"}</button></div></section><section className="results">
+  {project?.analysis ? (
+    <AnalysisView analysis={project.analysis} build={build} busy={busy === "build"} />
+  ) : (
+    <Empty title="Your analysis will appear here" text="Save this project and run an analysis to get a clear product strategy." />
+  )}
+  {project?.concept && (
+    <div className="flex flex-col gap-5 mt-4">
+      <div className="flex border-b border-[#d9dfd9] gap-6">
+        <button
+          onClick={() => setViewTab("spec")}
+          className={`pb-2 font-bold text-sm border-b-2 transition-all cursor-pointer ${
+            viewTab === "spec" ? "border-[#1e5e45] text-[#1e5e45]" : "border-transparent text-[#63706a] hover:text-[#18211d]"
+          }`}
+        >
+          Blueprint Specs
+        </button>
+        <button
+          onClick={() => setViewTab("prototype")}
+          className={`pb-2 font-bold text-sm border-b-2 transition-all cursor-pointer ${
+            viewTab === "prototype" ? "border-[#1e5e45] text-[#1e5e45]" : "border-transparent text-[#63706a] hover:text-[#18211d]"
+          }`}
+        >
+          Interactive Prototype
+        </button>
+      </div>
+      {viewTab === "spec" ? (
+        <ConceptView
+          concept={project.concept}
+          conversation={project.conversation}
+          instruction={instruction}
+          setInstruction={setInstruction}
+          submit={refine}
+          busy={busy === "refine"}
+        />
+      ) : (
+        <div className="flex flex-col gap-6">
+          <PrototypePreview concept={project.concept} />
+          <section className="panel concept !border-t-0 !pt-2">
+            <h3 className="text-xs font-bold text-[#18211d] mb-2 uppercase tracking-wide">Refine Prototype</h3>
+            <div className="conversation">
+              {project.conversation.map((m, i) => (
+                <p className={m.role} key={i}>
+                  {m.content}
+                </p>
+              ))}
+            </div>
+            <form className="refine" onSubmit={refine}>
+              <input
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                disabled={busy === "refine"}
+                placeholder="Make the layout clean or add a new block..."
+              />
+              <button disabled={busy === "refine" || !instruction.trim()}>
+                {busy === "refine" ? "Updating..." : "Update"}
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+    </div>
+  )}
+</section></div></section></main>
 }
 function Field({label,children}:{label:string;children:React.ReactNode}) {return <label>{label}{children}</label>}
 function AnalysisView({analysis,build,busy}:{analysis:Analysis;build:()=>void;busy:boolean}) {return <section className="panel analysis"><div className="panel-top"><div><p className="eyebrow">AI analysis</p><h2>Product opportunity</h2></div><button onClick={build} disabled={busy}>{busy?"Building...":"Build my product"}</button></div><p className="summary">{analysis.summary}</p><div className="analysis-grid"><Fact l="Purpose" v={analysis.purpose}/><Fact l="Target users" v={analysis.targetUsers}/><Fact l="Core problem" v={analysis.coreProblem}/><Fact l="Positioning" v={analysis.positioning}/><Fact l="Business model" v={analysis.businessModel}/></div><List label="Key features" items={analysis.keyFeatures}/><List label="Suggested improvements" items={analysis.improvements}/><List label="Proposed MVP" items={analysis.mvpFeatures}/></section>}
