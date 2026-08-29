@@ -152,7 +152,7 @@ Dashboard
 ## AI
 
 * Google Gemini API
-* Gemini `gemini-2.5-flash`
+* Gemini `gemini-3.6-flash`
 
 ## Development Tools
 
